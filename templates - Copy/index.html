@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>AI MediBot</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    canvas { border: 1px solid #ccc; display:block; margin-bottom:20px; }
+    #alerts { color: red; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>AI MediBot</h1>
+  <canvas id="vitalsChart" width="600" height="300"></canvas>
+
+  <form id="symptomForm">
+    <textarea id="symptoms" rows="3" cols="50"></textarea><br>
+    <button type="submit">Submit</button>
+  </form>
+
+  <p id="medAdvice"></p>
+  <ul id="alerts"></ul>
+
+  <a href="/download">Download full project ZIP</a>
+
+  <script>
+    const vitalsArr = [], labels = [];
+    const ctx = document.getElementById('vitalsChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels, datasets: [
+          { label: 'Temp', data: [], borderColor: 'red', fill: false },
+          { label: 'HR', data: [], borderColor: 'blue', fill: false },
+          { label: 'SpO₂', data: [], borderColor: 'green', fill: false }
+        ]
+      },
+      options: { animation: false }
+    });
+
+    setInterval(()=>{
+      fetch('/vitals').then(r=>r.json()).then(d=>{
+        labels.push(new Date(d.timestamp).toLocaleTimeString());
+        vitalsArr.push(d);
+        if (labels.length>20) { labels.shift(); vitalsArr.shift(); }
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = vitalsArr.map(v=>v.temperature);
+        chart.data.datasets[1].data = vitalsArr.map(v=>v.heart_rate);
+        chart.data.datasets[2].data = vitalsArr.map(v=>v.spo2);
+        chart.update();
+      });
+    },2000);
+
+    document.getElementById('symptomForm').addEventListener('submit',e=>{
+      e.preventDefault();
+      const symptoms = document.getElementById('symptoms').value.trim();
+      const vit = vitalsArr[vitalsArr.length-1];
+      fetch('/submit',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ vitals:vit, symptoms })
+      }).then(r=>r.json()).then(resp=>{
+        document.getElementById('medAdvice').innerText = "Suggested medicine: "+resp.suggested_med;
+        const list = document.getElementById('alerts');
+        list.innerHTML='';
+        (resp.alerts||[]).forEach(a=>{
+          const li = document.createElement('li');
+          li.textContent = '⚠️ '+a;
+          list.appendChild(li);
+        });
+      }).catch(console.error);
+    });
+  </script>
+</body>
+</html>

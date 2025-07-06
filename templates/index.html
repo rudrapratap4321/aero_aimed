@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MediBot Mission Control</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    /* --- GLOBAL LAYOUT & THEME --- */
+    body {
+      margin: 0;
+      height: 100vh;
+      background: #0d0d14;
+      color: #e0e0e0;
+      font-family: "Roboto Mono", monospace;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .overlay {
+      background: rgba(20, 20, 30, 0.75);
+      backdrop-filter: blur(6px);
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 20px;
+      width: 520px;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 16px;
+      border-bottom: 1px solid #444;
+      padding-bottom: 8px;
+    }
+    h2 { margin: 0; font-size: 1.5rem; }
+
+    /* --- BUTTONS --- */
+    .btn {
+      background: #1a1a29;
+      border: 1px solid #333;
+      color: #e0e0e0;
+      padding: 8px 14px;
+      margin: 0 4px;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      transition: background 0.2s, border 0.2s;
+    }
+    .btn:hover {
+      background: #2a2a39;
+      border-color: #555;
+    }
+
+    /* --- CHART --- */
+    canvas {
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 6px;
+      display: block;
+      margin: 16px auto;
+      width: 480px !important;
+      height: 240px !important;
+    }
+
+    /* --- FORM & TEXTAREA --- */
+    textarea {
+      width: calc(100% - 2px);
+      background: #1a1a29;
+      color: #e0e0e0;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 6px;
+      font-family: inherit;
+    }
+    button[type="submit"] {
+      margin-top: 8px;
+      background: #1a1a29;
+      color: #e0e0e0;
+      border: 1px solid #333;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button[type="submit"]:hover {
+      background: #2a2a39;
+    }
+
+    /* --- ALERTS & ORDERS --- */
+    #alerts li {
+      color: #ff6961;
+      margin: 4px 0;
+    }
+    #orderLink {
+      display: block;
+      margin-top: 8px;
+      color: #5ee5ff;
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="overlay">
+    <header>
+      <h2>MediBot Mission Control 🛰️</h2>
+    </header>
+
+    <!-- Emergency Simulation -->
+    <div style="text-align:center;">
+      <button class="btn" id="simOn">Simulate Emergency</button>
+      <button class="btn" id="simOff">Normal Mode</button>
+    </div>
+
+    <!-- Live Vitals Chart -->
+    <canvas id="vitalsChart"></canvas>
+
+    <!-- Symptom Input -->
+    <form id="symptomForm">
+      <textarea id="symptoms" rows="2" placeholder="Describe your symptoms..."></textarea><br>
+      <button type="submit">Analyze</button>
+    </form>
+
+    <!-- Output Area -->
+    <p id="medAdvice"></p>
+    <ul id="alerts"></ul>
+    <a id="orderLink" href="#" target="_blank"></a>
+  </div>
+
+  <script>
+    const ctx = document.getElementById('vitalsChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'Sys', data: [], borderColor: '#ff5454', fill: false, pointRadius: 2 },
+          { label: 'Dia', data: [], borderColor: '#54afff', fill: false, pointRadius: 2 },
+          { label: 'HR', data: [], borderColor: '#49ff49', fill: false, pointRadius: 2 },
+          { label: 'Temp', data: [], borderColor: '#ffa654', fill: false, pointRadius: 2 },
+          { label: 'SpO₂', data: [], borderColor: '#e054ff', fill: false, pointRadius: 2 }
+        ]
+      },
+      options: {
+        animation: { duration: 250, easing: 'easeOutQuad' },
+        responsive: false,
+        scales: {
+          x: { title: { display: true, text: 'Time' } },
+          y: { beginAtZero: false }
+        },
+        plugins: {
+          legend: { display: true, position: 'bottom', labels: { boxWidth: 10 } }
+        }
+      }
+    });
+
+    let latest = {};
+    const evt = new EventSource('/stream');
+    evt.onmessage = e => {
+      const v = JSON.parse(e.data);
+      latest = v;
+      const t = new Date(v.timestamp).toLocaleTimeString();
+      chart.data.labels.push(t);
+      ['systolic','diastolic','heart_rate','temperature','spo2'].forEach((k,i)=>chart.data.datasets[i].data.push(v[k]));
+      if(chart.data.labels.length > 15){
+        chart.data.labels.shift();
+        chart.data.datasets.forEach(ds=>ds.data.shift());
+      }
+      chart.update();
+    };
+
+    document.getElementById('simOn').onclick = () => fetch('/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on:true})});
+    document.getElementById('simOff').onclick = () => fetch('/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on:false})});
+
+    document.getElementById('symptomForm').onsubmit = e => {
+      e.preventDefault();
+      fetch('/submit',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({vitals:latest, symptoms:document.getElementById('symptoms').value})
+      })
+      .then(r=>r.json())
+      .then(r => {
+        document.getElementById('medAdvice').innerText = 'Medicine: ' + r.suggested_med;
+        document.getElementById('alerts').innerHTML = r.alerts.map(a=>`<li>${a}</li>`).join('');
+        const ol = document.getElementById('orderLink');
+        if(!r.in_stock){ ol.href = r.order_url; ol.innerText = 'Order Medicine'; }
+        else ol.innerText = '';
+      });
+    };
+  </script>
+</body>
+</html>
